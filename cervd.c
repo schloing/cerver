@@ -1,82 +1,99 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/types.h>
-#include <netinet/in.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-#define PORTNUM 2300
+#define PORT 8000
+#define SIZE 1024
+
+static volatile int cont = 1;
+
+int create_socket() {
+    struct sockaddr_in addr;
+
+    int server_socket    = socket(AF_INET, SOCK_STREAM, 0);
+
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    int bind_res   = bind(server_socket, (struct sockaddr*)&addr, sizeof(addr));
+    int listen_res = listen(server_socket, 5);
+
+    printf("created socket!\n");
+
+    // reimplement error handling
+
+    return server_socket;
+}
+
+int wait_client(int server_socket) {
+    struct sockaddr_in cliaddr;
+
+    printf("entered wait_client\n");
+
+    int addrlen       = sizeof(cliaddr);
+    int client_socket = accept(server_socket, (struct sockaddr*)&cliaddr, &addrlen);
+
+    printf("accept success %s\n", inet_ntoa(cliaddr.sin_addr));
+
+    return client_socket;
+}
+
+void* socket_handler(void* socket_desc) {
+
+    int  client_socket = *(int*)socket_desc;
+
+    char buf[SIZE];
+    char msg[] = "HTTP/1.1 200 OK\nContent-Type: text/html\n\n"
+                 "<!DOCTYPE html><html> <head> <title>Hello World</title> </head> <body> <h1>Hello, World!</h1> </body> </html>"; // from response buffer
+    
+    while (cont) {
+        int bufsiz = read(client_socket, buf, SIZE - 1);
+    
+        if (bufsiz <= 0) break;
+
+        buf[bufsiz] = '\0';
+       
+        printf("\n\n%s\n\n", buf);
+        fflush(stdout);
+
+        send(client_socket, msg, strlen(msg), 0);
+
+        if (strncmp(buf, "end", 3) == 0) break;
+    }
+
+    close(client_socket);
+}
+
+void abort_all(int s) {
+    printf("ctrl+c, aborting all\n");
+    cont = 0;
+}
 
 int main() {
-    FILE* response = fopen("response", "r");
-
-    if (response == NULL) {
-        perror("response");
-        goto exit_response;
-    }
-
-    fseek(response, 0, SEEK_END); long fsize = ftell(response);
-    fseek(response, 0, SEEK_SET);
-
-    char* msg = (char*)malloc(fsize + 1);
-
-    fread(msg, 1, fsize, response);
-
-    // null terminate the buffer
-    msg[fsize] = '\0';
-
-    struct sockaddr_in dest;
-    struct sockaddr_in serv;
-
-    socklen_t socksize = sizeof(struct sockaddr_in);
-    int       mysocket;
-    int       consocket;
-
-    memset(&serv, 0, sizeof(serv));
-
-    serv.sin_family      = AF_INET;
-    serv.sin_addr.s_addr = htonl(INADDR_ANY);
-    serv.sin_port        = htons(PORTNUM);
-
-    printf("server @ %s:%d\n", inet_ntoa(serv.sin_addr), PORTNUM);
-
-    if ((mysocket = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        perror("socket");
-        goto exit_socket;
-    }
-
-    bind(mysocket, (struct sockaddr*)&serv, sizeof(struct sockaddr));
-
-    if (listen(mysocket, 1) == -1) {
-        perror("listen");
-        goto exit_socket;
-    }
+    int server_socket = create_socket();
     
-    if ((consocket = accept(mysocket, (struct sockaddr*)&dest, &socksize)) == -1) {
-        perror("accept");
-        goto exit_socket;
-    }
+//  signal(SIGINT, abort_all);
 
-    while (consocket) {
-        printf("new client @ %s\n", inet_ntoa(dest.sin_addr));
+    while (cont) {
+        int       client_socket = wait_client(server_socket);
+        int       flags         = fcntl(client_socket, F_GETFL, 0);
+       
+        fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
 
-        send(consocket, msg, strlen(msg), 0);
-        close(consocket);
+        pthread_t id;
         
-        if ((consocket = accept(mysocket, (struct sockaddr*)&dest, &socksize)) == -1) {
-            perror("accept (while)");
-            goto exit_socket;
-        }
+        pthread_create(&id, NULL, (void*)socket_handler, (void*)&client_socket);
+        pthread_detach(id);
     }
 
-exit_socket:
-    close(mysocket);
-    free(msg);
-
-exit_response:
-    fclose(response);
-
-    return EXIT_SUCCESS;
+    return 0;
 }
