@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -14,6 +15,7 @@
 #define SIZE 1024
 
 static volatile int cont = 1;
+static char*        message;
 
 int create_socket() {
     struct sockaddr_in addr;
@@ -48,12 +50,9 @@ int wait_client(int server_socket) {
 }
 
 void* socket_handler(void* socket_desc) {
-
     int  client_socket = *(int*)socket_desc;
 
     char buf[SIZE];
-    char msg[] = "HTTP/1.1 200 OK\nContent-Type: text/html\n\n"
-                 "<!DOCTYPE html><html> <head> <title>Hello World</title> </head> <body> <h1>Hello, World!</h1> </body> </html>"; // from response buffer
     
     while (cont) {
         int bufsiz = read(client_socket, buf, SIZE - 1);
@@ -63,9 +62,8 @@ void* socket_handler(void* socket_desc) {
         buf[bufsiz] = '\0';
        
         printf("\n\n%s\n\n", buf);
-        fflush(stdout);
 
-        send(client_socket, msg, strlen(msg), 0);
+        send(client_socket, message, strlen(message), 0);
 
         if (strncmp(buf, "end", 3) == 0) break;
     }
@@ -79,7 +77,25 @@ void abort_all(int s) {
 }
 
 int main() {
-    int server_socket = create_socket();
+    int   server_socket = create_socket();
+    FILE* response      = fopen("response", "r");
+    
+    /* static char* message */
+
+    fseek(response, 0, SEEK_END);
+    
+    size_t response_length = ftell(response);
+    
+    message = (char*)malloc(response_length + 1);
+
+    fseek(response, 0, SEEK_SET);
+
+    fread(message, 1, response_length, response);
+    message[response_length] = '\0';
+
+    printf("message: %s\n", message);
+
+    fclose(response);
     
 //  signal(SIGINT, abort_all);
 
@@ -94,6 +110,8 @@ int main() {
         pthread_create(&id, NULL, (void*)socket_handler, (void*)&client_socket);
         pthread_detach(id);
     }
+
+    free(message);
 
     return 0;
 }
