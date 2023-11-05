@@ -100,13 +100,13 @@ int main() {
 //  signal(SIGINT, abort_all);
 
     while (cont) {
-        int       client_socket = wait_client(server_socket);
-        int       flags         = fcntl(client_socket, F_GETFL, 0);
+        int client_socket = wait_client(server_socket);
+        int flags         = fcntl(client_socket, F_GETFL, 0);
        
         fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
-
-        pthread_t id;
         
+        pthread_t id;
+
         pthread_create(&id, NULL, (void*)socket_handler, (void*)&client_socket);
         pthread_detach(id);
     }
