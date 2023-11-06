@@ -1,5 +1,6 @@
 HTTP/1.1 200 OK
 Content-Type: text/html
+Cache-Control: no-cache
 
 <!DOCTYPE html>
 <html>

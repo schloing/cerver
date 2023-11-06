@@ -51,31 +51,9 @@ int wait_client(int server_socket) {
     return client_socket;
 }
 
-void socket_handler(int epoll_fd, struct epoll_event* events,
-                    int* socket_desc) {
-    int  client_socket = *socket_desc;
-    char buf[SIZE];
-
-    int epoll_events = epoll_wait(epoll_fd, events, 1, -1);
-    if (epoll_events == 0) return;
-
-    if (events[0].events & EPOLLIN) {
-        int bufsiz = read(client_socket, buf, SIZE - 1);
-
-        if (bufsiz <= 0) { goto end; }
-
-        buf[bufsiz] = '\0';
-
-        printf("\nreceived: %s\n", buf);
-
-        send(client_socket, message, strlen(message), 0);
-
-        if (strncmp(buf, "end", 3) == 0);
-
-end:
-        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_socket, NULL);
-        close(client_socket);
-    }
+void socket_handler(int socket_desc) {
+    int  client_socket = socket_desc;
+    send(client_socket, message, strlen(message), 0);
 }
 
 void abort_all(int s) {
@@ -92,7 +70,7 @@ int main() {
    
     struct epoll_event event;
 
-    event.events  = EPOLLIN;
+    event.events  = EPOLLIN | EPOLLET;
     event.data.fd = server_socket;
 
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_socket, &event);
@@ -115,9 +93,11 @@ int main() {
     fclose(response);
 
     struct epoll_event events[10];
+    
+    int curr_fd = 1;
 
     while (cont) {
-        int num_events = epoll_wait(epoll_fd, events, 10, 1);
+        int num_events = epoll_wait(epoll_fd, events, curr_fd, 1);
 
         for (int i = 0; i < num_events; i++) {
             int fd = events[i].data.fd;
@@ -125,15 +105,29 @@ int main() {
             if (fd == server_socket) {
                 int client_socket = wait_client(server_socket);
 
+                if (client_socket == -1)
+                {
+                    if((errno == EAGAIN) ||
+                       (errno == EWOULDBLOCK)) { break; }
+                    else { /* error accept */; }
+                }
+
                 fcntl(client_socket, F_SETFL, O_NONBLOCK);
-                
+               
                 event.events  = EPOLLIN | EPOLLET;
                 event.data.fd = client_socket;
                
                 epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &event);
+
+                curr_fd++;
             }
             else {
-                socket_handler(epoll_fd, events, &fd);
+                socket_handler(fd);
+               
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &event);
+
+                curr_fd--;
+				close(fd);
             }
         }
 
