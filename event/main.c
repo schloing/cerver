@@ -1,12 +1,14 @@
+// virtually identical to vanilla
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -49,26 +51,31 @@ int wait_client(int server_socket) {
     return client_socket;
 }
 
-void* socket_handler(void* socket_desc) {
-    int  client_socket = *(int*)socket_desc;
-
+void socket_handler(int epoll_fd, struct epoll_event* events,
+                    int* socket_desc) {
+    int  client_socket = *socket_desc;
     char buf[SIZE];
-    
-    while (cont) {
+
+    int epoll_events = epoll_wait(epoll_fd, events, 1, -1);
+    if (epoll_events == 0) return;
+
+    if (events[0].events & EPOLLIN) {
         int bufsiz = read(client_socket, buf, SIZE - 1);
-    
-        if (bufsiz <= 0) break;
+
+        if (bufsiz <= 0) { goto end; }
 
         buf[bufsiz] = '\0';
-       
-        printf("\n\n%s\n\n", buf);
+
+        printf("\nreceived: %s\n", buf);
 
         send(client_socket, message, strlen(message), 0);
 
-        if (strncmp(buf, "end", 3) == 0) break;
-    }
+        if (strncmp(buf, "end", 3) == 0);
 
-    close(client_socket);
+end:
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_socket, NULL);
+        close(client_socket);
+    }
 }
 
 void abort_all(int s) {
@@ -78,8 +85,18 @@ void abort_all(int s) {
 
 int main() {
     int   server_socket = create_socket();
+    int   epoll_fd      = epoll_create1(0);
     FILE* response      = fopen("response", "r");
-    
+
+    fcntl(server_socket, F_SETFL, O_NONBLOCK);
+   
+    struct epoll_event event;
+
+    event.events  = EPOLLIN;
+    event.data.fd = server_socket;
+
+    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_socket, &event);
+
     /* static char* message */
 
     fseek(response, 0, SEEK_END);
@@ -96,21 +113,36 @@ int main() {
     printf("message: %s\n", message);
 
     fclose(response);
-    
-//  signal(SIGINT, abort_all);
+
+    struct epoll_event events[10];
 
     while (cont) {
-        int client_socket = wait_client(server_socket);
-        int flags         = fcntl(client_socket, F_GETFL, 0);
-       
-        fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
-        
-        pthread_t id;
+        int num_events = epoll_wait(epoll_fd, events, 10, 1);
 
-        pthread_create(&id, NULL, (void*)socket_handler, (void*)&client_socket);
-        pthread_detach(id);
+        for (int i = 0; i < num_events; i++) {
+            int fd = events[i].data.fd;
+
+            if (fd == server_socket) {
+                int client_socket = wait_client(server_socket);
+
+                fcntl(client_socket, F_SETFL, O_NONBLOCK);
+                
+                event.events  = EPOLLIN | EPOLLET;
+                event.data.fd = client_socket;
+               
+                epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &event);
+            }
+            else {
+                socket_handler(epoll_fd, events, &fd);
+            }
+        }
+
+        if (!cont) { goto cleanup; }
     }
 
+cleanup:
+    close(epoll_fd);
+    close(server_socket);
     free(message);
 
     return 0;
