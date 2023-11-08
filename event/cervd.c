@@ -75,8 +75,7 @@ int main() {
 
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_socket, &event);
 
-    /* static char* message */
-
+// load response buffer
     fseek(response, 0, SEEK_END);
     
     size_t response_length = ftell(response);
@@ -91,48 +90,50 @@ int main() {
     printf("message: %s\n", message);
 
     fclose(response);
+// END response buffer
 
     struct epoll_event events[10];
     
     int curr_fd = 1;
 
-    while (cont) {
-        int num_events = epoll_wait(epoll_fd, events, curr_fd, 1);
+// event loop
+while (cont) {
+    int num_events = epoll_wait(epoll_fd, events, curr_fd, 1);
 
-        for (int i = 0; i < num_events; i++) {
-            int fd = events[i].data.fd;
+    for (int i = 0; i < num_events; i++) {
+        int fd = events[i].data.fd;
 
-            if (fd == server_socket) {
-                int client_socket = wait_client(server_socket);
+        if (fd == server_socket) {
+            int client_socket = wait_client(server_socket);
 
-                if (client_socket == -1)
-                {
-                    if((errno == EAGAIN) ||
-                       (errno == EWOULDBLOCK)) { break; }
-                    else { /* error accept */; }
-                }
-
-                fcntl(client_socket, F_SETFL, O_NONBLOCK);
-               
-                event.events  = EPOLLIN | EPOLLET;
-                event.data.fd = client_socket;
-               
-                epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &event);
-
-                curr_fd++;
+            if (client_socket == -1)
+            {
+                if((errno == EAGAIN) ||
+                   (errno == EWOULDBLOCK)) { break; }
+                else { /* error accept */; }
             }
-            else {
-                socket_handler(fd);
-               
-                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &event);
 
-                curr_fd--;
-				close(fd);
-            }
+            fcntl(client_socket, F_SETFL, O_NONBLOCK);
+           
+            event.events  = EPOLLIN | EPOLLET;
+            event.data.fd = client_socket;
+           
+            epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &event);
+
+            curr_fd++;
         }
+        else {
+            socket_handler(fd);
+           
+            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &event);
 
-        if (!cont) { goto cleanup; }
+            curr_fd--;
+            close(fd);
+        }
     }
+
+    if (!cont) { goto cleanup; }
+}
 
 cleanup:
     close(epoll_fd);
